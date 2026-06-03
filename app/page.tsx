@@ -11,11 +11,11 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const activeConv = conversations.find(c => c.id === activeId) ?? null;
   const messages = activeConv?.messages ?? [];
-
   const hour = new Date().getHours();
   const greeting = useMemo(() => hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite", [hour]);
 
@@ -33,24 +33,12 @@ export default function Page() {
     else alert("Senha incorreta.");
   }
 
-  function newChat() {
-    setActiveId(null);
-  }
-
-  function selectConv(id: string) {
-    setActiveId(id);
-  }
-
   async function generateTitle(userMsg: string): Promise<string> {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          password,
-          titleOnly: true,
-          userMsg,
-        }),
+        body: JSON.stringify({ password, titleOnly: true, userMsg }),
       });
       const data = await res.json();
       return data.title || userMsg.slice(0, 30);
@@ -70,16 +58,14 @@ export default function Page() {
     if (!convId) {
       convId = crypto.randomUUID();
       isNew = true;
-      const newConv: Conversation = { id: convId, title: "Nova conversa", messages: [] };
-      setConversations(prev => [newConv, ...prev]);
+      setConversations(prev => [{ id: convId!, title: "Nova conversa", messages: [] }, ...prev]);
       setActiveId(convId);
     }
 
-    const updatedMessages: Msg[] = [...(conversations.find(c => c.id === convId)?.messages ?? []), { role: "user", content: prompt }];
+    const prevMsgs = conversations.find(c => c.id === convId)?.messages ?? [];
+    const updatedMessages: Msg[] = [...prevMsgs, { role: "user", content: prompt }];
 
-    setConversations(prev =>
-      prev.map(c => c.id === convId ? { ...c, messages: updatedMessages } : c)
-    );
+    setConversations(prev => prev.map(c => c.id === convId ? { ...c, messages: updatedMessages } : c));
     setLoading(true);
 
     try {
@@ -97,11 +83,7 @@ export default function Page() {
 
       setConversations(prev =>
         prev.map(c => c.id === convId
-          ? {
-              ...c,
-              title: title ?? c.title,
-              messages: [...updatedMessages, { role: "assistant", content: answer }],
-            }
+          ? { ...c, title: title ?? c.title, messages: [...updatedMessages, { role: "assistant", content: answer }] }
           : c
         )
       );
@@ -139,46 +121,65 @@ export default function Page() {
 
   return (
     <main className="shell">
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarOpen ? " expanded" : ""}`}>
         <div className="sidebar-header">
           <div className="logo-mark">✺</div>
           <span className="brand">Zyricon</span>
-          <button className="icon-btn" title="Colapsar" style={{ marginLeft: "auto" }}>⊟</button>
+          <button className="toggle-btn" onClick={() => setSidebarOpen(o => !o)}>
+            {sidebarOpen ? "←" : "→"}
+          </button>
         </div>
 
-        <button className="new-chat-btn" onClick={newChat}>
-          <span>⊕</span> New Chat
+        <button className="new-chat-btn" onClick={() => setActiveId(null)}>
+          <span className="btn-icon">✦</span>
+          <span className="btn-label">New Chat</span>
         </button>
 
         <div className="sidebar-section-label">Features</div>
         <nav className="sidebar-nav">
-          <a className="nav-item active">💬 Chat</a>
-          <a className="nav-item">📁 Archived</a>
-          <a className="nav-item">📚 Library</a>
+          <div className="nav-item active">
+            <span className="ni-icon">💬</span>
+            <span className="ni-label">Chat</span>
+          </div>
+          <div className="nav-item">
+            <span className="ni-icon">📁</span>
+            <span className="ni-label">Archived</span>
+          </div>
+          <div className="nav-item">
+            <span className="ni-icon">📚</span>
+            <span className="ni-label">Library</span>
+          </div>
         </nav>
 
         <div className="sidebar-section-label">Workspaces</div>
         <nav className="sidebar-nav">
           {conversations.map(conv => (
-            <a
+            <div
               key={conv.id}
-              className={`nav-item conv-item ${conv.id === activeId ? "active" : ""}`}
-              onClick={() => selectConv(conv.id)}
+              className={`nav-item conv-item${conv.id === activeId ? " active" : ""}`}
+              onClick={() => setActiveId(conv.id)}
               title={conv.title}
             >
-              🗂️ {conv.title.length > 22 ? conv.title.slice(0, 22) + "…" : conv.title}
-            </a>
+              <span className="ni-icon">🗂</span>
+              <span className="ni-label">{conv.title.length > 20 ? conv.title.slice(0, 20) + "…" : conv.title}</span>
+            </div>
           ))}
           {conversations.length === 0 && (
-            <span className="nav-item muted">Nenhuma conversa ainda</span>
+            <div className="nav-item muted">
+              <span className="ni-icon">·</span>
+              <span className="ni-label">Nenhuma conversa</span>
+            </div>
           )}
         </nav>
 
-        <div className="upgrade-card">
-          <div className="upgrade-icon">♛</div>
-          <strong>Upgrade to premium</strong>
-          <p>Boost productivity with seamless automation and responsive AI.</p>
-          <button className="upgrade-btn">Upgrade</button>
+        <div className="sidebar-bottom">
+          <div className="upgrade-row">
+            <span className="upgrade-icon">♛</span>
+            <div className="upgrade-text">
+              <strong>Upgrade to Pro</strong>
+              <span>Acesse modelos avançados</span>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -227,17 +228,17 @@ export default function Page() {
             </div>
 
             <div className="feature-cards">
-              <div className="feat-card">
+              <div className="feat-card" onClick={() => send("Me ajude a gerar uma imagem")}>
                 <div className="feat-card-top">🖼 <span className="feat-tag">Create Image</span></div>
                 <strong>Image Generator</strong>
                 <p>Create high-quality images instantly from text.</p>
               </div>
-              <div className="feat-card">
+              <div className="feat-card" onClick={() => send("Crie uma apresentação profissional")}>
                 <div className="feat-card-top">📊 <span className="feat-tag">Make Slides</span></div>
                 <strong>AI Presentation</strong>
                 <p>Turn ideas into engaging, professional presentations.</p>
               </div>
-              <div className="feat-card">
+              <div className="feat-card" onClick={() => send("Me ajude a escrever código")}>
                 <div className="feat-card-top">💻 <span className="feat-tag">Generate Code</span></div>
                 <strong>Dev Assistant</strong>
                 <p>Generate clean, production ready code in seconds.</p>
