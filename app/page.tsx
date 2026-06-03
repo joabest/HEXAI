@@ -1,43 +1,297 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 
 type Msg = { role: "user" | "assistant"; content: string };
+type Conversation = { id: string; title: string; messages: Msg[] };
 
 export default function Page() {
   const [password, setPassword] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const activeConv = conversations.find(c => c.id === activeId) ?? null;
+  const messages = activeConv?.messages ?? [];
+
   const hour = new Date().getHours();
   const greeting = useMemo(() => hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite", [hour]);
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   async function unlock() {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, checkOnly: true }) });
-    if (res.ok) setUnlocked(true); else alert("Senha incorreta. Configure APP_PASSWORD na Vercel.");
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password, checkOnly: true }),
+    });
+    if (res.ok) setUnlocked(true);
+    else alert("Senha incorreta.");
+  }
+
+  function newChat() {
+    setActiveId(null);
+  }
+
+  function selectConv(id: string) {
+    setActiveId(id);
+  }
+
+  async function generateTitle(userMsg: string): Promise<string> {
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          password,
+          titleOnly: true,
+          userMsg,
+        }),
+      });
+      const data = await res.json();
+      return data.title || userMsg.slice(0, 30);
+    } catch {
+      return userMsg.slice(0, 30);
+    }
   }
 
   async function send(text?: string) {
     const prompt = (text || input).trim();
     if (!prompt || loading) return;
     setInput("");
-    const next: Msg[] = [...messages, { role: "user", content: prompt }];
-    setMessages(next);
+
+    let convId = activeId;
+    let isNew = false;
+
+    if (!convId) {
+      convId = crypto.randomUUID();
+      isNew = true;
+      const newConv: Conversation = { id: convId, title: "Nova conversa", messages: [] };
+      setConversations(prev => [newConv, ...prev]);
+      setActiveId(convId);
+    }
+
+    const updatedMessages: Msg[] = [...(conversations.find(c => c.id === convId)?.messages ?? []), { role: "user", content: prompt }];
+
+    setConversations(prev =>
+      prev.map(c => c.id === convId ? { ...c, messages: updatedMessages } : c)
+    );
     setLoading(true);
+
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, messages: next }) });
-      const data = await res.json();
-      setMessages([...next, { role: "assistant", content: data.answer || data.error || "Sem resposta." }]);
+      const [aiRes, title] = await Promise.all([
+        fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ password, messages: updatedMessages }),
+        }),
+        isNew ? generateTitle(prompt) : Promise.resolve(null),
+      ]);
+
+      const data = await aiRes.json();
+      const answer = data.answer || data.error || "Sem resposta.";
+
+      setConversations(prev =>
+        prev.map(c => c.id === convId
+          ? {
+              ...c,
+              title: title ?? c.title,
+              messages: [...updatedMessages, { role: "assistant", content: answer }],
+            }
+          : c
+        )
+      );
     } catch {
-      setMessages([...next, { role: "assistant", content: "Erro ao conectar com a IA." }]);
-    } finally { setLoading(false); }
+      setConversations(prev =>
+        prev.map(c => c.id === convId
+          ? { ...c, messages: [...updatedMessages, { role: "assistant", content: "Erro ao conectar com a IA." }] }
+          : c
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  if (!unlocked) return <main className="login"><div className="orb"/><section className="loginCard"><b>HEXAI</b><h1>Seu assistente pessoal</h1><p>Digite sua senha para abrir o painel.</p><input type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&unlock()}/><button onClick={unlock}>Entrar</button></section></main>;
+  if (!unlocked) {
+    return (
+      <main className="login-screen">
+        <div className="siri-orb" />
+        <div className="login-card">
+          <h1>Zyricon AI</h1>
+          <p>Digite sua senha para acessar o painel.</p>
+          <input
+            type="password"
+            placeholder="Senha"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && unlock()}
+          />
+          <button onClick={unlock}>Entrar</button>
+        </div>
+      </main>
+    );
+  }
 
-  return <main className="shell">
-    <aside className="rail"><div className="logo">✺</div><span className="active">⌂</span><span>○</span><span>↺</span><span>▣</span><span>⌘</span><span>◌</span><div className="grow"/><span>♬</span><span>⚙</span><div className="avatar">J</div></aside>
-    <section className="sources"><div className="card"><h2>Sources</h2><div className="ghostBox">▧</div><p>Add from connected knowledge or upload to thread.</p><div className="row"><button>Attach file</button><button>Upload media</button></div><small>@ Browse existing content</small></div><div className="card"><h2>Suggested tasks</h2><div className="chips"><button onClick={()=>send("Crie uma landing page moderna em HTML CSS e JS")}>Criar landing page</button><button onClick={()=>send("Explique e corrija este erro de código")}>Corrigir erro</button><button onClick={()=>send("Faça um roteiro de posts para Instagram")}>Roteiro de posts</button></div></div></section>
-    <section className="workspace"><header><select><option>HEXAI Free</option></select><div/><button className="light">Search thread</button><button className="dark">+ New Thread</button></header><div className="hero"><div className="orb small"/><h1>{greeting}, Joab<br/>What's on <em>your mind?</em></h1><div className="composer"><textarea placeholder="Ask AI a question or make a request..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); send(); }}}/><div className="composerBar"><button>Attach</button><button>Writing Styles⌄</button><label>Citation <input type="checkbox" defaultChecked/></label><button className="send" onClick={()=>send()}>{loading ? "..." : "↑"}</button></div></div><p className="label">GET STARTED WITH AN EXAMPLE BELOW</p><div className="examples"><button onClick={()=>send("Faça uma lista de tarefas para meu projeto pessoal")}>Write a to-do list for a personal project</button><button onClick={()=>send("Gere um e-mail profissional para responder uma proposta")}>Generate an email to reply to a job offer</button><button onClick={()=>send("Resuma este artigo em um parágrafo")}>Summarize this article in one paragraph</button><button onClick={()=>send("Como funciona IA em capacidade técnica?")}>How does AI work in a technical capacity</button></div><div className="chat">{messages.map((m,i)=><article key={i} className={m.role}><b>{m.role === "user" ? "Você" : "HEXAI"}</b><pre>{m.content}</pre></article>)}</div></div></section>
-  </main>;
+  return (
+    <main className="shell">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="logo-mark">✺</div>
+          <span className="brand">Zyricon</span>
+          <button className="icon-btn" title="Colapsar" style={{ marginLeft: "auto" }}>⊟</button>
+        </div>
+
+        <button className="new-chat-btn" onClick={newChat}>
+          <span>⊕</span> New Chat
+        </button>
+
+        <div className="sidebar-section-label">Features</div>
+        <nav className="sidebar-nav">
+          <a className="nav-item active">💬 Chat</a>
+          <a className="nav-item">📁 Archived</a>
+          <a className="nav-item">📚 Library</a>
+        </nav>
+
+        <div className="sidebar-section-label">Workspaces</div>
+        <nav className="sidebar-nav">
+          {conversations.map(conv => (
+            <a
+              key={conv.id}
+              className={`nav-item conv-item ${conv.id === activeId ? "active" : ""}`}
+              onClick={() => selectConv(conv.id)}
+              title={conv.title}
+            >
+              🗂️ {conv.title.length > 22 ? conv.title.slice(0, 22) + "…" : conv.title}
+            </a>
+          ))}
+          {conversations.length === 0 && (
+            <span className="nav-item muted">Nenhuma conversa ainda</span>
+          )}
+        </nav>
+
+        <div className="upgrade-card">
+          <div className="upgrade-icon">♛</div>
+          <strong>Upgrade to premium</strong>
+          <p>Boost productivity with seamless automation and responsive AI.</p>
+          <button className="upgrade-btn">Upgrade</button>
+        </div>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar">
+          <div className="model-pill">ChatGPT v4.0 ▾</div>
+          <div style={{ flex: 1 }} />
+          <button className="topbar-btn">⚙ Configuration</button>
+          <button className="topbar-btn">↑ Export</button>
+        </header>
+
+        {messages.length === 0 ? (
+          <div className="hero-area">
+            <div className="siri-orb" />
+            <h1 className="hero-title">Ready to Create Something New?</h1>
+
+            <div className="quick-chips">
+              <button className="chip" onClick={() => send("Criar uma imagem conceitual")}>🖼 Create Image</button>
+              <button className="chip" onClick={() => send("Brainstorm de ideias para meu projeto")}>💡 Brainstorm</button>
+              <button className="chip" onClick={() => send("Me ajude a criar um plano de ação")}>📋 Make a plan</button>
+            </div>
+
+            <div className="composer-wrap">
+              <div className="composer">
+                <span className="composer-star">✦</span>
+                <textarea
+                  className="composer-input"
+                  placeholder="Ask Anything..."
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                />
+                <div className="composer-bar">
+                  <button className="bar-btn">📎 Attach</button>
+                  <span className="divider">|</span>
+                  <button className="bar-btn">⚙ Settings</button>
+                  <span className="divider">|</span>
+                  <button className="bar-btn">⊞ Options</button>
+                  <div style={{ flex: 1 }} />
+                  <button className="mic-btn">🎙</button>
+                  <button className="send-btn" onClick={() => send()} disabled={loading}>
+                    {loading ? "…" : "↑"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="feature-cards">
+              <div className="feat-card">
+                <div className="feat-card-top">🖼 <span className="feat-tag">Create Image</span></div>
+                <strong>Image Generator</strong>
+                <p>Create high-quality images instantly from text.</p>
+              </div>
+              <div className="feat-card">
+                <div className="feat-card-top">📊 <span className="feat-tag">Make Slides</span></div>
+                <strong>AI Presentation</strong>
+                <p>Turn ideas into engaging, professional presentations.</p>
+              </div>
+              <div className="feat-card">
+                <div className="feat-card-top">💻 <span className="feat-tag">Generate Code</span></div>
+                <strong>Dev Assistant</strong>
+                <p>Generate clean, production ready code in seconds.</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="chat-area">
+            <div className="chat-header-info">
+              <div className="siri-orb small" />
+              <span>{activeConv?.title}</span>
+            </div>
+            <div className="chat-messages">
+              {messages.map((m, i) => (
+                <div key={i} className={`bubble ${m.role}`}>
+                  <div className="bubble-label">{m.role === "user" ? "Você" : "Zyricon"}</div>
+                  <pre className="bubble-text">{m.content}</pre>
+                </div>
+              ))}
+              {loading && (
+                <div className="bubble assistant">
+                  <div className="bubble-label">Zyricon</div>
+                  <div className="typing-dots"><span /><span /><span /></div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            <div className="chat-composer">
+              <div className="composer">
+                <span className="composer-star">✦</span>
+                <textarea
+                  className="composer-input"
+                  placeholder="Ask Anything..."
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                />
+                <div className="composer-bar">
+                  <button className="bar-btn">📎 Attach</button>
+                  <span className="divider">|</span>
+                  <button className="bar-btn">⚙ Settings</button>
+                  <span className="divider">|</span>
+                  <button className="bar-btn">⊞ Options</button>
+                  <div style={{ flex: 1 }} />
+                  <button className="mic-btn">🎙</button>
+                  <button className="send-btn" onClick={() => send()} disabled={loading}>
+                    {loading ? "…" : "↑"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
+  );
 }
